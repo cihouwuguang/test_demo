@@ -1,0 +1,78 @@
+# 订单模块用例
+#
+# 注意执行顺序（pytest 按文件内的定义顺序执行）：
+#   ① 创建订单 → extract order_id
+#   ② 查订单   → 用 ${order_id}
+#   ③ 支付     → 用 ${order_id}
+#   ④ 重复支付 → 验证幂等
+#
+# 注意：所有含 ${} 的值必须加引号，否则 YAML 解析会失败
+
+- name: 创建订单成功
+  request:
+    method: POST
+    path: /api/order
+    json:
+      userId: "${test_user_id}"
+      amount: 99.9
+      goodsName: 自动化下单
+  extract:
+    order_id: $.data.orderId
+  validate:
+    - eq: [status_code, 200]
+    - eq: ["$.code", 0]
+    - eq: ["$.data.status", CREATED]
+    - eq: ["$.data.amount", 99.9]
+
+- name: 查询刚创建的订单
+  request:
+    method: GET
+    path: "/api/order/${order_id}"
+  validate:
+    - eq: ["$.code", 0]
+    - eq: ["$.data.orderId", "${order_id}"]
+    - eq: ["$.data.status", CREATED]
+    - eq: ["$.data.userId", "${test_user_id}"]
+
+- name: 支付订单
+  request:
+    method: POST
+    path: "/api/order/${order_id}/pay"
+  validate:
+    - eq: ["$.code", 0]
+    - eq: ["$.data.status", PAID]
+
+- name: 重复支付应被拒绝（幂等性）
+  request:
+    method: POST
+    path: "/api/order/${order_id}/pay"
+  validate:
+    - eq: ["$.code", 3004]
+    - contains: ["$.msg", 重复]
+
+- name: 下单用户不存在
+  request:
+    method: POST
+    path: /api/order
+    json:
+      userId: 99999
+      amount: 10
+  validate:
+    - eq: ["$.code", 3001]
+
+- name: 下单金额非法
+  request:
+    method: POST
+    path: /api/order
+    json:
+      userId: "${test_user_id}"
+      amount: -1
+  validate:
+    - eq: ["$.code", 3002]
+
+- name: 查询不存在的订单
+  request:
+    method: GET
+    path: /api/order/99999
+  validate:
+    - eq: ["$.code", 3003]

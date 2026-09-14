@@ -1,0 +1,83 @@
+# 用户模块用例
+#
+# ${test_user_id} 是 conftest.py 里准备的测试用户 id
+# 这演示了"变量池 + 占位符"怎么解决跨用例的数据依赖
+#
+# 注意：所有含 ${} 的值必须加引号！
+#   YAML 里 { 是特殊字符，不加引号会解析失败
+
+- name: 查询已存在的用户
+  request:
+    method: GET
+    path: "/api/user/${test_user_id}"
+  validate:
+    - eq: [status_code, 200]
+    - eq: ["$.code", 0]
+    - eq: ["$.data.id", "${test_user_id}"]
+
+- name: 查询不存在的用户
+  request:
+    method: GET
+    path: /api/user/99999
+  validate:
+    - eq: ["$.code", 2001]
+    - contains: ["$.msg", 不存在]
+
+- name: 创建用户成功
+  request:
+    method: POST
+    path: /api/user
+    json:
+      username: yaml_case_user
+      phone: "13500001111"
+  extract:
+    created_user_id: $.data.id
+  validate:
+    - eq: ["$.code", 0]
+    - eq: ["$.data.username", yaml_case_user]
+
+- name: 创建用户-手机号位数不对
+  request:
+    method: POST
+    path: /api/user
+    json:
+      username: bad_phone_user
+      phone: "135"
+  validate:
+    - eq: ["$.code", 2003]
+
+- name: 创建用户-缺少必填项
+  request:
+    method: POST
+    path: /api/user
+    json:
+      phone: "13500002222"
+  validate:
+    - eq: ["$.code", 2002]
+
+- name: 删除刚创建的用户
+  request:
+    method: DELETE
+    path: "/api/user/${created_user_id}"
+  validate:
+    - eq: ["$.code", 0]
+    - eq: ["$.data.id", "${created_user_id}"]
+
+- name: 删除不存在的用户
+  request:
+    method: DELETE
+    path: /api/user/99999
+  validate:
+    - eq: ["$.code", 2001]
+
+- name: 查询用户列表
+  request:
+    method: GET
+    path: /api/users
+    params:
+      page: 1
+      size: 5
+  validate:
+    - eq: ["$.code", 0]
+    - gt: ["$.data.total", 0]
+    - not_null: ["$.data.list"]

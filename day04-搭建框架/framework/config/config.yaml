@@ -1,0 +1,15 @@
+# 环境配置
+# 切换环境只改 default_env，或者命令行传：pytest --env=prod
+default_env: test
+
+test:
+  base_url: http://127.0.0.1:5000
+  timeout: 10
+  headers:
+    Content-Type: application/json
+
+prod:
+  base_url: https://api.example.com
+  timeout: 30
+  headers:
+    Content-Type: application/json

@@ -1,0 +1,8 @@
+requests==2.32.3
+pytest==8.3.3
+pytest-html==4.1.1
+pytest-rerunfailures==14.0
+pytest-xdist==3.6.1
+PyYAML==6.0.2
+jsonpath-ng==1.6.1
+Flask==3.0.3

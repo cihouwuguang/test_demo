@@ -1,0 +1,75 @@
+# 登录模块用例
+#
+# 加一条用例 = 往这里加一段，不用写任何 Python 代码
+#
+# 字段说明：
+#   name      用例名（显示在报告里）
+#   request   请求信息，key 对应 requests 的参数名
+#   extract   从响应里提取变量，给后面的用例用
+#   validate  断言列表
+
+- name: 登录成功
+  request:
+    method: POST
+    path: /api/login
+    json:
+      username: admin
+      password: "123456"
+  extract:
+    token: $.data.token
+  validate:
+    - eq: [status_code, 200]
+    - eq: [$.code, 0]
+    - eq: [$.data.username, admin]
+    - not_null: [$.data.token]
+
+- name: 密码错误
+  request:
+    method: POST
+    path: /api/login
+    json:
+      username: admin
+      password: wrong
+  validate:
+    - eq: [status_code, 200]
+    - eq: [$.code, 1003]
+
+- name: 用户名为空
+  request:
+    method: POST
+    path: /api/login
+    json:
+      username: ""
+      password: "123456"
+  validate:
+    - eq: [$.code, 1001]
+
+- name: 用户名长度不足
+  request:
+    method: POST
+    path: /api/login
+    json:
+      username: a
+      password: "123456"
+  validate:
+    - eq: [$.code, 1002]
+
+- name: 用户名超长
+  request:
+    method: POST
+    path: /api/login
+    json:
+      username: aaaaaaaaaaaaaaaaaaaaa
+      password: "123456"
+  validate:
+    - eq: [$.code, 1002]
+
+- name: 缺少 password 参数
+  request:
+    method: POST
+    path: /api/login
+    json:
+      username: admin
+  validate:
+    - eq: [$.code, 1001]
+    - contains: [$.msg, 密码]
