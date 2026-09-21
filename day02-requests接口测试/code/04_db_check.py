@@ -32,6 +32,11 @@ from decimal import Decimal
 import requests
 
 BASE_URL = "http://127.0.0.1:5000"
+
+# 本机地址必须绕过系统代理：开着代理软件时 requests 会把 127.0.0.1 的请求
+# 也发去代理，代理一不在，本脚本所有请求立刻失败，报错却像"服务没启动"。
+# 真实项目推荐在系统环境变量里设 NO_PROXY=127.0.0.1,localhost。
+os.environ["NO_PROXY"] = "127.0.0.1,localhost"
 DB_PATH = os.path.join(tempfile.gettempdir(), "aa_demo.db")
 
 

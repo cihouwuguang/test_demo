@@ -9,12 +9,23 @@ conftest.py —— pytest 的特殊文件
     cd day03-pytest框架
     pytest -vs
 """
+import os
 import time
 
 import pytest
 import requests
 
 BASE_URL = "http://127.0.0.1:5000"
+
+# 本机地址必须绕过系统代理
+#
+# 为什么这里要写这一行？
+#   机器上开着代理软件（Clash 之类）时，requests 会读环境变量 HTTP_PROXY，
+#   连 127.0.0.1:5000 这种本机地址也照样发去代理。代理进程一不在，
+#   下面的健康检查立刻失败，提示却是"连不上 mock 服务"——排查方向完全错了
+#   （真实原因是代理，不是服务没起）。
+#   写在 conftest.py 里，本目录所有用例都生效，包括用例里自己 import 的 requests。
+os.environ["NO_PROXY"] = "127.0.0.1,localhost"
 
 
 # ---------------------------------------------------------------- 环境检查

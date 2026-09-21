@@ -15,6 +15,7 @@
 import os
 import sys
 import time
+from urllib.parse import urlparse
 
 # 让本文件能直接运行做自测（python common/request_util.py）
 #
@@ -30,6 +31,19 @@ import requests
 from common.logger import get_logger
 from common.var_pool import VarPool
 from config.config import get_config
+
+
+# 本机回环地址 —— 访问这些地址时不应该走系统代理（原因见 RequestClient 初始化）
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def _is_local_url(url):
+    """判断 base_url 是不是本机地址"""
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:          # 配置里的 base_url 写得不合法时不在这里二次报错
+        return False
+    return host in _LOCAL_HOSTS
 
 
 class RequestClient:
@@ -51,6 +65,20 @@ class RequestClient:
         # 统一设置默认请求头
         if self.config.headers:
             self.session.headers.update(self.config.headers)
+
+        # 本机服务必须绕过系统代理
+        #
+        # 为什么必须有这一段？
+        #   机器上开着代理软件（Clash 之类）时，requests 会读环境变量 HTTP_PROXY，
+        #   连 127.0.0.1:5000 这种本机地址也照样发去代理。代理进程一不在，
+        #   全部用例立刻报 ProxyError。最坑的是：ProxyError 是 ConnectionError
+        #   的子类，会被下面 `except ConnectionError` 当成"服务没启动"吞掉、
+        #   重试、最后抛一个看不懂的超时错误 —— 排查时没人会想到是代理。
+        #
+        #   只对本机地址关掉 trust_env：线上域名仍然尊重环境里的代理配置。
+        if _is_local_url(self.config.base_url):
+            self.session.trust_env = False
+            self.log.info(f"base_url 是本机地址，已绕过系统代理：{self.config.base_url}")
 
         self.log.info(f"初始化 RequestClient：{self.config}")
 
@@ -93,6 +121,18 @@ class RequestClient:
             except requests.exceptions.Timeout as e:
                 last_exc = e
                 self.log.warning(f"第 {attempt + 1} 次请求超时：{e}")
+            except requests.exceptions.ProxyError as e:
+                # 必须写在 ConnectionError **前面**：ProxyError 是它的子类，
+                # 顺序反了就会被当成"服务没启动"静默重试，最后报个看不懂的错。
+                # 代理问题的特征是一挂全挂，且和被测服务毫无关系，必须单独点名。
+                self.log.error(
+                    f"请求被系统代理拦截：{e}\n"
+                    f"  环境里的代理配置：HTTP_PROXY={os.environ.get('HTTP_PROXY')}，"
+                    f"HTTPS_PROXY={os.environ.get('HTTPS_PROXY')}\n"
+                    f"  本机服务请设置 NO_PROXY=127.0.0.1,localhost，"
+                    f"或在代码里绕过代理（本框架对本机地址已自动处理）。"
+                )
+                raise        # 代理问题重试没有意义，直接抛出
             except requests.exceptions.ConnectionError as e:
                 last_exc = e
                 self.log.warning(f"第 {attempt + 1} 次连接失败：{e}")

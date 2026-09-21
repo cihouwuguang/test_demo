@@ -16,6 +16,17 @@ from jsonpath_ng import parse
 
 BASE_URL = "http://127.0.0.1:5000"
 
+# 本机地址必须绕过系统代理
+#
+# 为什么脚本里要写这两行？
+#   机器上开着代理软件（Clash 之类）时，requests 会读环境变量 HTTP_PROXY，
+#   连 127.0.0.1:5000 这种本机地址也照样发去代理。代理进程一不在，
+#   本脚本所有请求立刻失败，而报错看起来像是"服务没启动"——排查方向完全错了。
+#   真实项目推荐在系统环境变量里设 NO_PROXY=127.0.0.1,localhost；
+#   写在这里是为了脚本在任何人的机器上都能一次跑通（且只影响本进程）。
+import os
+os.environ["NO_PROXY"] = "127.0.0.1,localhost"
+
 
 def check_server():
     try:

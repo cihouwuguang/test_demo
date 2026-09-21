@@ -189,12 +189,34 @@ def check_service(request):
     if _only_unit_tests(request.session):
         return              # 单元测试不需要被测服务
 
+    import os
+
     import requests
+    from common.request_util import _is_local_url
     from config.config import get_config
 
     cfg = get_config()
+
+    # 本机地址必须显式绕过系统代理
+    #
+    # 为什么：开着代理软件时，这次健康检查会被代理劫持，报出来的却是
+    # 「mock 服务没启动」—— 而真相是代理问题（ProxyError 是 ConnectionError
+    # 的子类，从异常信息里根本看不出来）。排查的人会去反复重启 mock 服务，
+    # 重启几次都没用。健康检查自己都踩这个坑，就没资格替用例做前置判断了。
+    proxies = {"http": None, "https": None} if _is_local_url(cfg.base_url) else None
+
     try:
-        requests.get(cfg.base_url, timeout=3)
+        requests.get(cfg.base_url, timeout=3, proxies=proxies)
+    except requests.exceptions.ProxyError as e:
+        # 必须排在 RequestException 前面：代理问题的处置方式和"服务没启动"
+        # 完全不同，混在一起只会让人照着错误的提示去排查。
+        hint = (f"请求被系统代理拦截：{e}\n\n"
+                f"环境里的代理配置：HTTP_PROXY={os.environ.get('HTTP_PROXY')}，"
+                f"HTTPS_PROXY={os.environ.get('HTTPS_PROXY')}\n\n"
+                "本机服务请在环境变量里设置：\n"
+                "    NO_PROXY=127.0.0.1,localhost\n"
+                "或者临时关掉代理软件再跑。\n")
+        pytest.exit("\n" + "=" * 62 + "\n" + hint + "=" * 62, returncode=1)
     except requests.exceptions.RequestException:
         if "127.0.0.1" in cfg.base_url or "localhost" in cfg.base_url:
             hint = (f"连不上本地服务：{cfg.base_url}\n\n"
