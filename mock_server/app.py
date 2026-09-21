@@ -8,6 +8,20 @@
 
 启动后访问 http://127.0.0.1:5000 可以看到接口清单。
 数据存在内存里，重启服务会重置。
+
+业务错误码表（写负向用例时照着这个设计，见 day02 教程第八节）：
+    1001 登录：用户名或密码为空        1002 登录：用户名长度不在 2-20
+    1003 登录：用户名或密码错误
+    2001 用户不存在                    2002 缺少 username
+    2003 手机号不是 11 位              2004 分页参数非法（非整数 / <=0）
+    3001 下单用户不存在                3002 金额必须大于 0
+    3003 订单不存在                    3004 订单已支付（重复支付，幂等保护）
+    4001 缺少 sign/timestamp 或格式错  4002 请求已过期（时间戳超 300 秒）
+    4003 签名错误
+    401  未授权（HTTP 状态码也是 401）
+
+注意：除了 401 之外，其它业务失败全部是 **HTTP 200 + 响应体里的 code**。
+写断言必须两层都做。
 """
 
 import sys
@@ -60,6 +74,24 @@ def check_token():
     return True
 
 
+def parse_int_arg(raw, name, default=None):
+    """
+    解析「应该是整数」的入参，解析不了返回 None（由调用方给出结构化错误）
+
+    为什么要单独写这个？
+      直接 int(request.args.get("page")) 时，传 page=abc 会抛 ValueError，
+      Flask 兜底成 HTTP 500 + 一整页 HTML 错误页。
+      被测系统本该返回「参数非法」这种可断言的结构化错误，
+      返回 500 会把负向用例搞成「服务端崩了」，测试根本没法写断言。
+    """
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------- 首页
 
 @app.route("/", methods=["GET"])
@@ -75,6 +107,7 @@ def index():
             "GET  /api/users": "用户列表（需 token，支持 page/size）",
             "POST /api/order": "创建订单（需 token，依赖用户 id）",
             "GET  /api/order/<id>": "查订单（需 token）",
+            "POST /api/order/<id>/pay": "支付订单（需 token，演示状态流转与幂等）",
             "POST /api/sign/verify": "验签接口演示",
             "GET  /api/slow": "慢接口，3 秒后返回（演示 timeout）",
             "GET  /api/error": "故意报错（演示异常处理）",
@@ -172,8 +205,13 @@ def list_users():
     if not check_token():
         return fail(401, "未授权，请先登录", 401)
 
-    page = int(request.args.get("page", 1))
-    size = int(request.args.get("size", 10))
+    page = parse_int_arg(request.args.get("page"), "page", default=1)
+    size = parse_int_arg(request.args.get("size"), "size", default=10)
+    if page is None or size is None:
+        return fail(2004, "page 和 size 必须是整数")
+    if page < 1 or size < 1:
+        return fail(2004, "page 和 size 必须大于 0")
+
     all_users = list(USERS.values())
     start = (page - 1) * size
     return ok({
@@ -253,7 +291,11 @@ def sign_verify():
 
     if not sign or not timestamp:
         return fail(4001, "缺少 sign 或 timestamp")
-    if abs(time.time() - int(timestamp)) > 300:
+
+    ts = parse_int_arg(timestamp, "timestamp")
+    if ts is None:
+        return fail(4001, "timestamp 必须是整数秒")
+    if abs(time.time() - ts) > 300:
         return fail(4002, "请求已过期")
 
     body = request.get_json(silent=True) or {}
@@ -261,7 +303,11 @@ def sign_verify():
     expect = hashlib.md5((SIGN_KEY + raw + timestamp).encode()).hexdigest()
 
     if sign != expect:
-        return fail(4003, f"签名错误，期望 {expect}")
+        # 只回「签名错误」，绝不回显 expect。
+        # 回显期望签名等于把正确答案告诉调用方：篡改参数 → 报错里读到正确签名
+        # → 用这个签名重发 → 验签通过。「防篡改」当场变成「可以随便改」。
+        # 这是一个真实存在过的安全缺陷类型（信息泄露），值得单独记住。
+        return fail(4003, "签名错误")
     return ok({"msg": "验签通过"})
 
 

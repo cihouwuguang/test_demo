@@ -7,6 +7,13 @@
 #   ④ 重复支付 → 验证幂等
 #
 # 注意：所有含 ${} 的值必须加引号，否则 YAML 解析会失败
+#
+# 断言写法说明：
+#   eq: [status_code, 200]        两层断言的第一层（HTTP 状态码）
+#   eq: ["$.code", 0]             两层断言的第二层（业务 code）
+#   approx: ["$.data.amount", 99.9]   金额用**近似比较**，不要用 eq
+#       为什么？0.1 + 0.2 != 0.3 —— 二进制浮点数无法精确表示十进制小数，
+#       金额用 == 比较迟早会翻车。本项目面试题里强调过这一点，断言算子必须配套。
 
 - name: 创建订单成功
   request:
@@ -22,13 +29,16 @@
     - eq: [status_code, 200]
     - eq: ["$.code", 0]
     - eq: ["$.data.status", CREATED]
-    - eq: ["$.data.amount", 99.9]
+    - approx: ["$.data.amount", 99.9]
+    - eq: ["$.data.userId", "${test_user_id}"]
+    - not_null: ["$.data.orderId"]
 
 - name: 查询刚创建的订单
   request:
     method: GET
     path: "/api/order/${order_id}"
   validate:
+    - eq: [status_code, 200]
     - eq: ["$.code", 0]
     - eq: ["$.data.orderId", "${order_id}"]
     - eq: ["$.data.status", CREATED]
@@ -39,6 +49,7 @@
     method: POST
     path: "/api/order/${order_id}/pay"
   validate:
+    - eq: [status_code, 200]
     - eq: ["$.code", 0]
     - eq: ["$.data.status", PAID]
 
@@ -47,8 +58,31 @@
     method: POST
     path: "/api/order/${order_id}/pay"
   validate:
+    - eq: [status_code, 200]
     - eq: ["$.code", 3004]
     - contains: ["$.msg", 重复]
+
+- name: 查询已支付订单-状态保持一致
+  request:
+    method: GET
+    path: "/api/order/${order_id}"
+  validate:
+    - eq: [status_code, 200]
+    - eq: ["$.code", 0]
+    - eq: ["$.data.status", PAID]
+
+- name: 无 token 创建订单（安全用例）
+  request:
+    method: POST
+    path: /api/order
+    headers:
+      token: ""
+    json:
+      userId: "${test_user_id}"
+      amount: 10
+  validate:
+    - eq: [status_code, 401]
+    - eq: ["$.code", 401]
 
 - name: 下单用户不存在
   request:
@@ -58,6 +92,7 @@
       userId: 99999
       amount: 10
   validate:
+    - eq: [status_code, 200]
     - eq: ["$.code", 3001]
 
 - name: 下单金额非法
@@ -68,6 +103,7 @@
       userId: "${test_user_id}"
       amount: -1
   validate:
+    - eq: [status_code, 200]
     - eq: ["$.code", 3002]
 
 - name: 查询不存在的订单
@@ -75,4 +111,14 @@
     method: GET
     path: /api/order/99999
   validate:
+    - eq: [status_code, 200]
+    - eq: ["$.code", 3003]
+    - contains: ["$.msg", 不存在]
+
+- name: 支付不存在的订单
+  request:
+    method: POST
+    path: /api/order/99999/pay
+  validate:
+    - eq: [status_code, 200]
     - eq: ["$.code", 3003]

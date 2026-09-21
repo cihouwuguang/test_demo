@@ -5,6 +5,20 @@
 用 Python 内置的 sqlite3 演示（不用装东西）。
 实际项目里 MySQL 用 pymysql，写法几乎一样，区别在注释里标了。
 
+[!] **本课的一个重要前提，必须先说清楚**：
+    课程配套的 mock 服务（`mock_server/app.py`）没有数据库，订单存在内存字典里。
+    所以本文件里的"落库"这一步是**脚本自己代替被测系统做的**（标了【替身】）。
+    它演示的是**数据库校验的写法**，不是"我真的发现了一个没落库的 bug"。
+    面试被问到时照实说，别说成"我测出过落库失败的问题"。
+
+    要在本地看到真正的"接口成功但没落库"，得让被测系统自己维护持久化存储——
+    那超出这门 5 天冲刺课的范围，知道套路和写法就够用了。
+
+[!] **另一个坑**：本文件用裸 `assert` 教学，但 `python -O xxx.py` 会把所有 assert
+    全部编译掉（`__debug__` 为假），脚本会一路"通过"。做严肃测试时用
+    pytest / unittest 的断言，或者显式 `if not cond: raise AssertionError(...)`。
+    这里保留 assert 是为了让写法更直观，但你必须知道这个开关的存在。
+
 前置：先启动 mock 服务
     python mock_server/app.py
 
@@ -37,11 +51,13 @@ def init_db():
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE orders (
-            order_id   INTEGER PRIMARY KEY,
-            user_id    INTEGER,
-            goods_name TEXT,
-            amount     TEXT,
-            status     TEXT
+            order_id     INTEGER PRIMARY KEY,
+            user_id      INTEGER,
+            goods_name   TEXT,
+            -- 金额以「分」为单位存整数，从根上避免浮点精度问题
+            -- （本课第 4 节会讲为什么不能用 float / TEXT 存金额）
+            amount_cents INTEGER,
+            status       TEXT
         )
     """)
     conn.commit()
@@ -60,11 +76,11 @@ def demo_basic_sql():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    # 增
+    # 增（注意金额存的是分：99.90 元 → 9990 分）
     cur.execute("INSERT INTO orders VALUES (?, ?, ?, ?, ?)",
-                (1001, 1, "测试商品", "99.90", "CREATED"))
+                (1001, 1, "测试商品", 9990, "CREATED"))
     conn.commit()          # 增删改必须 commit，查询不用
-    print("  插入一条订单")
+    print("  插入一条订单（金额 99.90 元，存 9990 分）")
 
     # 查一条
     cur.execute("SELECT * FROM orders WHERE order_id = ?", (1001,))
@@ -112,10 +128,34 @@ def demo_why():
     print("    ③ 只改了缓存/Redis，没同步到数据库")
     print("    ④ 数据库字段长度不够，插入被截断或失败")
     print()
-    print("  结论：金融类业务（下单、支付、核销、发券）必须做库表校验\n")
+    print("  结论：金融类业务（下单、支付、核销、发券）必须做库表校验")
+    print("        注意：这类 bug **只有查库才能发现**，接口断言一定看不出来——")
+    print("        因为接口返回的一切都是对的，错的是「数据没落地」。\n")
 
 
 # ---------------------------------------------------------------- 3. 完整校验
+
+def query_order(cur, order_id):
+    """查库：真实项目里测试只做这一步，数据是系统写进去的"""
+    cur.execute("SELECT status, amount_cents FROM orders WHERE order_id = ?", (order_id,))
+    return cur.fetchone()
+
+
+def check_order(cur, order_id, expect_status, expect_amount_cents):
+    """
+    这就是「数据库校验」的写法：查出来 → 逐项断言 → 失败信息带上下文
+
+    这个函数才是本课的主角。注意它**不负责写数据**——
+    写数据是被测系统的事，测试只负责"我信不过你，我自己去库里看一眼"。
+    """
+    row = query_order(cur, order_id)
+    assert row is not None, \
+        f"数据库里没查到订单 {order_id}！接口说成功了，但库里没有"
+    assert row[0] == expect_status, \
+        f"订单 {order_id} 状态不对：库里是 {row[0]!r}，期望 {expect_status!r}"
+    assert row[1] == expect_amount_cents, \
+        f"订单 {order_id} 金额不对：库里是 {row[1]} 分，期望 {expect_amount_cents} 分"
+
 
 def demo_full_check():
     print("=" * 60)
@@ -127,33 +167,44 @@ def demo_full_check():
                   json={"username": "admin", "password": "123456"})
     s.headers.update({"token": resp.json()["data"]["token"]})
 
-    # 调下单接口
+    # ① 调下单接口
     amount = 128.50
+    amount_cents = int(round(amount * 100))          # 128.50 元 → 12850 分
     r = s.post(f"{BASE_URL}/api/order",
                json={"userId": 1, "amount": amount, "goodsName": "接口下单"})
     order_id = r.json()["data"]["orderId"]
     print(f"  ① 调接口下单成功，orderId={order_id}")
     print(f"     接口返回：{r.json()['data']}")
 
-    # 模拟落库（真实项目里这一步由被测系统完成）
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+
+    # ② 【替身】真实项目里这一步由被测系统完成，测试不参与
     cur.execute("INSERT INTO orders VALUES (?, ?, ?, ?, ?)",
-                (order_id, 1, "接口下单", f"{amount:.2f}", "CREATED"))
+                (order_id, 1, "接口下单", amount_cents, "CREATED"))
     conn.commit()
-    print(f"  ② 数据落库（真实场景下是系统自己写的）")
+    print("  ② 【替身】把订单写进库（真实场景下是系统自己写的，测试不参与）")
 
-    # 查库校验
-    cur.execute("SELECT status, amount FROM orders WHERE order_id = ?", (order_id,))
-    row = cur.fetchone()
-    print(f"  ③ 查库结果：{row}")
+    # ③ 查库校验 —— 这才是测试真正做的事
+    check_order(cur, order_id, "CREATED", amount_cents)
+    row = query_order(cur, order_id)
+    print(f"  ③ 查库结果：{row}  →  三项断言全部通过")
 
-    # 断言
-    assert row is not None, f"数据库里没查到订单 {order_id}！"
-    assert row[0] == "CREATED", f"订单状态不对，期望 CREATED，实际 {row[0]}"
-    assert abs(Decimal(row[1]) - Decimal(str(amount))) < Decimal("0.01"), \
-        f"金额不对，期望 {amount}，实际 {row[1]}"
-    print("  ④ 三项断言全部通过")
+    # ④ 反面演示：这个断言真的会失败吗？
+    #
+    #    很多人写的是「自证式断言」：脚本自己插一条数据，
+    #    紧接着断言"我插的这条数据等于我插的值"。这种断言**永远不可能失败**，
+    #    也就永远不可能因为"系统没落库"而报警 —— 它测的是脚本自己。
+    #
+    #    所以这里故意用一个**错误的期望值**去调同一个断言，
+    #    验证它真的会炸。会炸，才说明前面那条"通过"是有意义的。
+    print("\n  ④ 反面演示：故意断言一个错的状态，看断言是否真的会失败")
+    try:
+        check_order(cur, order_id, "PAID", amount_cents)
+    except AssertionError as e:
+        print(f"     断言如期失败 [OK]  {e}")
+    else:
+        raise SystemExit("断言本该失败却通过了 —— 说明校验逻辑是假的，必须排查")
 
     cur.close()
     conn.close()
@@ -164,7 +215,7 @@ def demo_full_check():
 
 def demo_decimal():
     print("=" * 60)
-    print("4. 金额为什么不能直接用 == 比较")
+    print("4. 金额为什么不能直接用 == 比较，也不该用 TEXT 存")
     print("=" * 60)
 
     print(f"  0.1 + 0.2 = {0.1 + 0.2}")
@@ -182,11 +233,18 @@ def demo_decimal():
 
     print("  解法三（推荐）：以分为单位存整数")
     print("    128.50 元 → 存 12850 分，整数比较永不丢精度")
+    print("    ← 本文件的 orders 表就是这么建的（amount_cents INTEGER）")
+    print()
+
+    print("  为什么也不要用 TEXT 存金额？")
+    print("    ① 排序会按字符串排，'9.00' > '10.00'，报表直接错")
+    print("    ② 没法在库里做 SUM/AVG 这类聚合")
+    print("    ③ '99.9' 和 '99.90' 会被当成两个不同的值，去重/比对全乱")
     print()
 
     print("  面试说法：")
     print("    金额字段数据库用 DECIMAL 类型，代码里用 Decimal 类，")
-    print("    或者以分为单位存整数。绝不用 float。\n")
+    print("    或者以分为单位存整数。绝不用 float，也不要用字符串。\n")
 
 
 # ---------------------------------------------------------------- 5. 数据清理
@@ -216,7 +274,10 @@ def demo_cleanup():
     print("\n  为什么重要：")
     print("    - 脏数据会让下次测试失败（比如下单用了重复的单号）")
     print("    - 测试环境数据越堆越多，最后没人敢用")
-    print("    - 框架里一般用 fixture 的 teardown 自动清理（Day 3 讲）\n")
+    print("    - 框架里一般用 fixture 的 teardown 自动清理（Day 3 讲）")
+    print("    - [!] 清理不要依赖前置用例成功：")
+    print("      Day4 框架里「删除刚创建的用户」依赖「创建用户成功」提取的变量，")
+    print("      前置一失败就会留下脏数据 —— 所以那里额外做了兜底清理。\n")
 
 
 # ---------------------------------------------------------------- 主程序

@@ -9,13 +9,14 @@ import os
 
 import pytest
 
-from common.case_runner import run_case
-from common.yaml_util import read_yaml
+from common.case_runner import load_cases, run_case
 
-# 读用例数据
+# 读用例数据 —— 用 load_cases 而不是 read_yaml：
+# 它在导入时就把每条用例的结构校验一遍，字段拼错会在"收集用例"阶段直接报错，
+# 而不是变成一条静默通过的绿用例
 _DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "test_login.yaml")
-CASES = read_yaml(_DATA_FILE)
+CASES = load_cases(_DATA_FILE)
 
 
 @pytest.mark.smoke

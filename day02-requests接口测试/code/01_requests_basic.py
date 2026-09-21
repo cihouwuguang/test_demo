@@ -153,7 +153,12 @@ def demo_timeout():
     print("\n  给 5 秒超时：")
     resp = requests.get(f"{BASE_URL}/api/slow", timeout=5)
     print(f"    成功：{resp.json()}")
-    print("\n  结论：框架里必须设默认超时，否则一个接口卡死会拖垮整个测试\n")
+    print("\n  结论：框架里必须设默认超时，否则一个接口卡死会拖垮整个测试")
+    print("  [!] 但别把 timeout 理解成「请求总共最多等 N 秒」——")
+    print("     它是 connect 和 read 两个独立超时，read 指的是"
+          "「两次收到字节之间的间隔」。")
+    print("     code/05_sign_and_exception.py 第 4 节用「慢速滴流服务」证明了这一点，")
+    print("     建议跑一遍再下结论。\n")
 
 
 # ---------------------------------------------------------------- 主程序

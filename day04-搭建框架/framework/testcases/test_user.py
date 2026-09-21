@@ -6,12 +6,11 @@ import os
 
 import pytest
 
-from common.case_runner import run_case
-from common.yaml_util import read_yaml
+from common.case_runner import load_cases, run_case
 
 _DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "test_user.yaml")
-CASES = read_yaml(_DATA_FILE)
+CASES = load_cases(_DATA_FILE)
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])

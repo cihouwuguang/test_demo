@@ -3,10 +3,20 @@
 # 加一条用例 = 往这里加一段，不用写任何 Python 代码
 #
 # 字段说明：
-#   name      用例名（显示在报告里）
-#   request   请求信息，key 对应 requests 的参数名
-#   extract   从响应里提取变量，给后面的用例用
-#   validate  断言列表
+#   name      用例名（显示在报告里）—— 必填
+#   request   请求信息，key 对应 requests 的参数名 —— 必填（要有 method / path）
+#   extract   从响应里提取变量，给后面的用例用 —— 可选
+#   validate  断言列表 —— 必填，且不能为空
+#
+# [!] 这四个字段之外的写法都会在收集用例时直接报错（包括把 validate 拼错）。
+#    这样做是为了防止"零断言执行 + 一条绿色的 passed"。
+#
+# 断言写法：- 算子: [实际值表达式, 期望值]
+#   实际值表达式：status_code（HTTP 状态码）或 JSONPath（如 $.code）
+#
+# 小贴士：每条用例都建议同时断言 status_code 和业务 code（两层断言）。
+#        本项目 mock 的业务失败绝大多数是 HTTP 200 + code != 0，
+#        只断言状态码会把大量业务失败误判成通过。
 
 - name: 登录成功
   request:
@@ -22,6 +32,7 @@
     - eq: [$.code, 0]
     - eq: [$.data.username, admin]
     - not_null: [$.data.token]
+    - gt: [$.data.userId, 0]
 
 - name: 密码错误
   request:
@@ -33,6 +44,7 @@
   validate:
     - eq: [status_code, 200]
     - eq: [$.code, 1003]
+    - contains: [$.msg, 错误]
 
 - name: 用户名为空
   request:
@@ -42,6 +54,7 @@
       username: ""
       password: "123456"
   validate:
+    - eq: [status_code, 200]
     - eq: [$.code, 1001]
 
 - name: 用户名长度不足
@@ -52,6 +65,7 @@
       username: a
       password: "123456"
   validate:
+    - eq: [status_code, 200]
     - eq: [$.code, 1002]
 
 - name: 用户名超长
@@ -62,6 +76,7 @@
       username: aaaaaaaaaaaaaaaaaaaaa
       password: "123456"
   validate:
+    - eq: [status_code, 200]
     - eq: [$.code, 1002]
 
 - name: 缺少 password 参数
@@ -71,5 +86,6 @@
     json:
       username: admin
   validate:
+    - eq: [status_code, 200]
     - eq: [$.code, 1001]
     - contains: [$.msg, 密码]
